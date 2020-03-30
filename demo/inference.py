@@ -27,6 +27,10 @@ from config import update_config
 from core.function import get_final_preds
 from utils.transforms import get_affine_transform
 
+from pathlib import Path
+import imageio
+from tqdm import tqdm
+
 COCO_KEYPOINT_INDEXES = {
     0: 'nose',
     1: 'left_eye',
@@ -159,10 +163,10 @@ def box_to_center_scale(box, model_image_width, model_image_height):
     if center[0] != -1:
         scale = scale * 1.25
 
-    return center, scale
+    return center, scale, box
 
 
-def prepare_output_dirs(prefix='/output/'):
+def prepare_output_dirs(prefix='output/'):
     pose_dir = prefix+'poses/'
     box_dir = prefix+'boxes/'
     if os.path.exists(pose_dir) and os.path.isdir(pose_dir):
@@ -178,8 +182,8 @@ def parse_args():
     parser = argparse.ArgumentParser(description='Train keypoints network')
     # general
     parser.add_argument('--cfg', type=str, required=True)
-    parser.add_argument('--videoFile', type=str, required=True)
-    parser.add_argument('--outputDir', type=str, default='/output/')
+    parser.add_argument('--imageDir', type=str, required=True)
+    parser.add_argument('--outputDir', type=str, default='output/')
     parser.add_argument('--inferenceFps', type=int, default=10)
     parser.add_argument('--writeBoxFrames', action='store_true')
 
@@ -212,7 +216,8 @@ def main():
 
     box_model = torchvision.models.detection.fasterrcnn_resnet50_fpn(pretrained=True)
     box_model.eval()
-
+#     box_model = box_model.cuda()
+    
     pose_model = eval('models.'+cfg.MODEL.NAME+'.get_pose_net')(
         cfg, is_train=False
     )
@@ -223,77 +228,68 @@ def main():
     else:
         print('expected model defined in config at TEST.MODEL_FILE')
 
-    pose_model = torch.nn.DataParallel(pose_model, device_ids=cfg.GPUS).cuda()
+#     pose_model = pose_model.cuda()
 
-    # Loading an video
-    vidcap = cv2.VideoCapture(args.videoFile)
-    fps = vidcap.get(cv2.CAP_PROP_FPS)
-    if fps < args.inferenceFps:
-        print('desired inference fps is '+str(args.inferenceFps)+' but video fps is '+str(fps))
-        exit()
-    every_nth_frame = round(fps/args.inferenceFps)
+    image_dir = Path(args.imageDir)
 
-    success, image_bgr = vidcap.read()
-    count = 0
+    for count, image_path in tqdm(enumerate(list(image_dir.iterdir()))):
+#         if count == 10:
+#             break
+        image = imageio.imread(image_path)
+        if len(image.shape) < 3:
+            image = np.repeat(np.expand_dims(image, -1), 3, axis=-1)
+        else:
+            image = image[:, :, :3]
 
-    while success:
-        if count % every_nth_frame != 0:
-            success, image_bgr = vidcap.read()
-            count += 1
-            continue
-
-        image = image_bgr[:, :, [2, 1, 0]]
-        count_str = str(count).zfill(32)
+        count_str = str(count).zfill(6)
 
         # object detection box
         pred_boxes = get_person_detection_boxes(box_model, image, threshold=0.8)
         if args.writeBoxFrames:
-            image_bgr_box = image_bgr.copy()
+            image_box = image.copy()
             for box in pred_boxes:
-                cv2.rectangle(image_bgr_box, box[0], box[1], color=(0, 255, 0),
+                cv2.rectangle(image_box, box[0], box[1], color=(0, 255, 0),
                               thickness=3)  # Draw Rectangle with the coordinates
-            cv2.imwrite(box_dir+'box%s.jpg' % count_str, image_bgr_box)
+            imageio.imwrite(box_dir+'box%s.jpg' % count_str, image_box)
         if not pred_boxes:
-            success, image_bgr = vidcap.read()
-            count += 1
             continue
 
         # pose estimation
-        box = pred_boxes[0]  # assume there is only 1 person
-        center, scale = box_to_center_scale(box, cfg.MODEL.IMAGE_SIZE[0], cfg.MODEL.IMAGE_SIZE[1])
-        image_pose = image.copy() if cfg.DATASET.COLOR_RGB else image_bgr.copy()
-        pose_preds = get_pose_estimation_prediction(pose_model, image_pose, center, scale)
+        centers, scales = [], []
+        boxes_post = [box_to_center_scale(b, cfg.MODEL.IMAGE_SIZE[0], cfg.MODEL.IMAGE_SIZE[1]) \
+                      for b in pred_boxes]
+        boxes_post = sorted(boxes_post, key=lambda x: -(x[1][0] * x[1][1]))
+        
+        for box_num, (center, scale, box) in enumerate(boxes_post[:2]): # the 2 most biggest
+            image_pose = image.copy() 
+            pose_preds = get_pose_estimation_prediction(pose_model, image_pose, center, scale)
 
-        new_csv_row = []
-        for _, mat in enumerate(pose_preds[0]):
-            x_coord, y_coord = int(mat[0]), int(mat[1])
-            cv2.circle(image_bgr, (x_coord, y_coord), 4, (255, 0, 0), 2)
-            new_csv_row.extend([x_coord, y_coord])
+            new_csv_row = [str(image_path), box_num, box[0][0], box[0][1], box[1][0], box[1][1]]
+            is_printed = False
+            for _, mat in enumerate(pose_preds[0]):
+                x_coord, y_coord = int(mat[0]), int(mat[1])                
+                new_csv_row.extend([x_coord, y_coord])
+                try:
+                    cv2.circle(image, (x_coord, y_coord), 4, (255, 0, 0), 2)
+                except:
+                    if not is_printed:
+                        print(image_path, 'error with chanels')
+                        is_printed = True
 
-        csv_output_rows.append(new_csv_row)
-        cv2.imwrite(pose_dir+'pose%s.jpg' % count_str, image_bgr)
 
-        # get next frame
-        success, image_bgr = vidcap.read()
-        count += 1
+            csv_output_rows.append(new_csv_row)
+        imageio.imwrite(pose_dir+'pose_{}.jpg'.format(count_str), image)
 
     # write csv
-    csv_headers = ['frame']
+    csv_headers = ['fname', 'box_num', 'box_top_left_x', 'box_top_left_y',
+                   'box_bottom_right_x', 'box_bottom_right_y']
     for keypoint in COCO_KEYPOINT_INDEXES.values():
         csv_headers.extend([keypoint+'_x', keypoint+'_y'])
 
-    with open(csv_output_filename, 'w', newline='') as csvfile:
+    with open(csv_output_filename, 'w', newline='', encoding='utf-8', errors='surrogatepass') as csvfile:
         csvwriter = csv.writer(csvfile)
         csvwriter.writerow(csv_headers)
         csvwriter.writerows(csv_output_rows)
-
-    os.system("ffmpeg -y -r "
-              + str(args.inferenceFps)
-              + " -pattern_type glob -i '"
-              + pose_dir
-              + "/*.jpg' -c:v libx264 -vf fps="
-              + str(args.inferenceFps)+" -pix_fmt yuv420p /output/movie.mp4")
-
 
 if __name__ == '__main__':
     main()

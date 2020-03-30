@@ -107,6 +107,7 @@ RUN make install
 
 # download fastrrnn pretrained model for person detection
 RUN python -c "import torchvision; model = torchvision.models.detection.fasterrcnn_resnet50_fpn(pretrained=True); model.eval()"
+RUN python -m pip install tqdm
 
 COPY inference.py $POSE_ROOT/tools
 COPY inference-config.yaml $POSE_ROOT/

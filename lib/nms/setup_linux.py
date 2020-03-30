@@ -44,8 +44,8 @@ def locate_cuda():
             raise EnvironmentError('The nvcc binary could not be '
                 'located in your $PATH. Either add it to your path, or set $CUDAHOME')
         home = os.path.dirname(os.path.dirname(nvcc))
-
-    cudaconfig = {'home':home, 'nvcc':nvcc,
+    print(home, 'home')
+    cudaconfig = {'home':home, 'nvcc': '/usr/lib/nvidia-cuda-toolkit/bin/nvcc', # nvcc,
                   'include': pjoin(home, 'include'),
                   'lib64': pjoin(home, 'lib64')}
     for k, v in cudaconfig.items():
