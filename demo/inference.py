@@ -66,17 +66,22 @@ COCO_INSTANCE_CATEGORY_NAMES = [
     'clock', 'vase', 'scissors', 'teddy bear', 'hair drier', 'toothbrush'
 ]
 
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+print(device)
+
 
 def get_person_detection_boxes(model, img, threshold=0.5):
     pil_image = Image.fromarray(img)  # Load the image
     transform = transforms.Compose([transforms.ToTensor()])  # Defing PyTorch Transform
     transformed_img = transform(pil_image)  # Apply the transform to the image
-    pred = model([transformed_img])  # Pass the image to the model
+    pred = model([transformed_img.to(device)])  # Pass the image to the model
     pred_classes = [COCO_INSTANCE_CATEGORY_NAMES[i]
-                    for i in list(pred[0]['labels'].numpy())]  # Get the Prediction Score
+                    for i in list(pred[0]['labels'].detach().cpu().numpy())]
+    # Get the prediction Score
     pred_boxes = [[(i[0], i[1]), (i[2], i[3])]
-                  for i in list(pred[0]['boxes'].detach().numpy())]  # Bounding boxes
-    pred_score = list(pred[0]['scores'].detach().numpy())
+                  for i in list(pred[0]['boxes'].detach().cpu().numpy())]
+    # Bounding boxes
+    pred_score = list(pred[0]['scores'].detach().cpu().numpy())
     if not pred_score:
         return []
     # Get list of index with score greater than threshold
@@ -114,7 +119,7 @@ def get_pose_estimation_prediction(pose_model, image, center, scale):
     pose_model.eval()
     with torch.no_grad():
         # compute output heatmap
-        output = pose_model(model_input)
+        output = pose_model(model_input.to(device))
         preds, _ = get_final_preds(
             cfg,
             output.clone().cpu().numpy(),
@@ -215,9 +220,9 @@ def main():
     csv_output_rows = []
 
     box_model = torchvision.models.detection.fasterrcnn_resnet50_fpn(pretrained=True)
+    box_model.to(device)
     box_model.eval()
-#     box_model = box_model.cuda()
-    
+
     pose_model = eval('models.'+cfg.MODEL.NAME+'.get_pose_net')(
         cfg, is_train=False
     )
@@ -228,7 +233,7 @@ def main():
     else:
         print('expected model defined in config at TEST.MODEL_FILE')
 
-#     pose_model = pose_model.cuda()
+    pose_model = pose_model.to(device)
 
     image_dir = Path(args.imageDir)
 
@@ -259,8 +264,9 @@ def main():
         boxes_post = [box_to_center_scale(b, cfg.MODEL.IMAGE_SIZE[0], cfg.MODEL.IMAGE_SIZE[1]) \
                       for b in pred_boxes]
         boxes_post = sorted(boxes_post, key=lambda x: -(x[1][0] * x[1][1]))
-        
-        for box_num, (center, scale, box) in enumerate(boxes_post[:2]): # the 2 most biggest
+
+        # the 2 most biggest
+        for box_num, (center, scale, box) in enumerate(boxes_post[:2]):
             image_pose = image.copy() 
             pose_preds = get_pose_estimation_prediction(pose_model, image_pose, center, scale)
 

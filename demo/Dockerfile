@@ -1,4 +1,4 @@
-FROM nvidia/cuda:10.2-cudnn7-devel-ubuntu16.04
+FROM pytorch/pytorch:1.3-cuda10.1-cudnn7-devel
 
 ENV OPENCV_VERSION="3.4.6"
 
@@ -88,22 +88,31 @@ RUN git clone https://github.com/leoxiaobin/deep-high-resolution-net.pytorch.git
 WORKDIR $POSE_ROOT
 RUN mkdir output && mkdir log
 
-RUN pip3 install -r requirements.txt && \
-    pip3 install torch==1.1.0 \
-    torchvision==0.3.0 \
-    opencv-python \
+RUN pip install -r requirements.txt && \
+    pip install opencv-python \
+#    torch==1.1.0 \
+#    torchvision==0.3.0 \
     pillow==6.2.1
+
+#ENV PATH="/root/miniconda3/bin:${PATH}"
+#ARG PATH="/root/miniconda3/bin:${PATH}"
+#
+#RUN wget \
+#    https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh \
+#    && mkdir /root/.conda \
+#    && bash Miniconda3-latest-Linux-x86_64.sh -b \
+#    && rm -f Miniconda3-latest-Linux-x86_64.sh \
 
 # build deep-high-resolution-net lib
 WORKDIR $POSE_ROOT/lib
 RUN make
 
-# install COCO API
-ARG COCOAPI=/cocoapi
-RUN git clone https://github.com/cocodataset/cocoapi.git $COCOAPI
-WORKDIR $COCOAPI/PythonAPI
-# Install into global site-packages
-RUN make install
+## install COCO API
+#ARG COCOAPI=/cocoapi
+#RUN git clone https://github.com/cocodataset/cocoapi.git $COCOAPI
+#WORKDIR $COCOAPI/PythonAPI
+## Install into global site-packages
+#RUN make install
 
 # download fastrrnn pretrained model for person detection
 RUN python -c "import torchvision; model = torchvision.models.detection.fasterrcnn_resnet50_fpn(pretrained=True); model.eval()"
