@@ -85,7 +85,12 @@ def get_person_detection_boxes(model, img, threshold=0.5):
     if not pred_score:
         return []
     # Get list of index with score greater than threshold
-    pred_t = [pred_score.index(x) for x in pred_score if x > threshold][-1]
+    pred_t = [pred_score.index(x) for x in pred_score if x > threshold]
+    if len(pred_t) == 0:
+        return []
+    else:
+        pred_t = pred_t[-1]
+
     pred_boxes = pred_boxes[:pred_t+1]
     pred_classes = pred_classes[:pred_t+1]
 
@@ -265,8 +270,8 @@ def main():
                       for b in pred_boxes]
         boxes_post = sorted(boxes_post, key=lambda x: -(x[1][0] * x[1][1]))
 
-        # the 2 most biggest
-        for box_num, (center, scale, box) in enumerate(boxes_post[:2]):
+        # the 2 most biggest => boxes_post[:2]
+        for box_num, (center, scale, box) in enumerate(boxes_post):
             image_pose = image.copy() 
             pose_preds = get_pose_estimation_prediction(pose_model, image_pose, center, scale)
 
